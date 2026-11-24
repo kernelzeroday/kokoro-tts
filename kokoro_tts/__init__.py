@@ -166,7 +166,10 @@ Commands:
     --merge-chunks     Merge existing chunks in split-output directory into chapter files
 
 Options:
-    --stream            Stream audio instead of saving to file
+    --stream            Stream audio instead of saving to file (plays via mpv
+                        when installed: pause, seek, < > to skip chunks; chunks
+                        are cached in ~/.cache/kokoro-tts with a .m3u playlist)
+    --no-mpv            With --stream, play through sounddevice instead of mpv
     --speed <float>     Set speech speed (default: 1.0)
     --lang <str>        Set language (default: en-us)
     --voice <str>       Set voice or blend voices (default: interactive selection)
@@ -819,7 +822,8 @@ def process_chunk_sequential(chunk: str, kokoro: Kokoro, voice: str, speed: floa
 
 def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us", 
                          stream=False, split_output=None, format="wav", debug=False, stdin_indicators=None,
-                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
+                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin",
+                         use_mpv=True):
     global stop_spinner
     
     # Define stdin indicators if not provided
@@ -937,6 +941,14 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
         # Treat single text file as one chapter
         chapters = [{'title': 'Chapter 1', 'content': text}]
 
+    if stream and use_mpv:
+        from .mpv_stream import mpv_available, stream_with_mpv
+        if mpv_available():
+            stream_with_mpv(kokoro, chapters, chunk_text, voice, speed, lang,
+                            model_path, debug)
+            return
+        if debug:
+            print("DEBUG: mpv not found, falling back to sounddevice streaming")
     if stream:
         import asyncio
         # Stream each chapter
@@ -1243,6 +1255,7 @@ def get_valid_options():
         '--help-voices',
         '--merge-chunks',
         '--stream',
+        '--no-mpv',
         '--speed',
         '--lang',
         '--voice',
@@ -1402,7 +1415,8 @@ def main():
     convert_text_to_audio(input_file, output_file, voice=voice, stream=stream, 
                          speed=speed, lang=lang, split_output=split_output, 
                          format=format, debug=debug, stdin_indicators=stdin_indicators,
-                         model_path=model_path, voices_path=voices_path)
+                         model_path=model_path, voices_path=voices_path,
+                         use_mpv='--no-mpv' not in sys.argv)
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -24,6 +25,9 @@ import soundfile as sf
 FIRST_CHUNK_CHARS = 250  # small first chunk so audio starts quickly
 CHUNK_CHARS = 500  # ~30s of audio; bounds the wait after skipping ahead
 SAMPLE_RATE = 24000
+# Render at most this many chunks past the one playing (0 = the whole document).
+# Keeps the GPU/CPU idle most of the time instead of rendering flat out.
+LOOKAHEAD = int(os.environ.get("KOKORO_LOOKAHEAD", "4"))
 
 KEYS = ("space pause · ←/→ 5s · ↑/↓ 1min · < > prev/next chunk · "
         "PgUp/PgDn 10 chunks · q quit")
@@ -147,7 +151,8 @@ def stream_with_mpv(kokoro, chapters, chunk_text, voice, speed, lang,
 
     def next_index():
         start = want[0]
-        for i in range(start, total):
+        end = total if LOOKAHEAD <= 0 else min(total, start + 1 + LOOKAHEAD)
+        for i in range(start, end):
             if not done[i]:
                 return i
         return None
@@ -191,18 +196,30 @@ def stream_with_mpv(kokoro, chapters, chunk_text, voice, speed, lang,
             if isinstance(pos, int) and 0 <= pos != want[0]:
                 want[0] = pos
                 wake.set()
-    finally:
+    finally:  # also runs on Ctrl+C (kokoro-tts's SIGINT handler raises SystemExit)
         stop.set()
         if mpv.poll() is None:
             mpv.terminate()
         mpv.wait()
         shutil.rmtree(sock_dir, ignore_errors=True)
 
-    rendered = sum(done)
-    print()
-    if error:
-        print(f"Rendering failed: {error[0]!r}")
-    if rendered < total:
-        print(f"{rendered}/{total} chunks rendered; rerun to keep rendering from cache.")
-    else:
-        print(f"Replay: mpv {m3u}")
+        rendered = sum(done)
+        print()
+        if error:
+            print(f"Rendering failed: {error[0]!r}")
+        if rendered < total:
+            print(f"{rendered}/{total} chunks rendered; rerun to keep rendering from cache.")
+        else:
+            print(f"Replay: mpv {m3u}")
+
+        if worker.is_alive():
+            # A chunk is mid-render inside native code (onnxruntime's thread
+            # pool); normal interpreter teardown under it aborts with
+            # "terminate called without an active exception". Nothing is lost:
+            # the partial chunk is a .part file that the next run ignores.
+            close = getattr(kokoro, "close", None)
+            if close:
+                close()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os._exit(0)

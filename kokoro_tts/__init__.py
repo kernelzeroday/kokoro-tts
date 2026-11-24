@@ -170,6 +170,9 @@ Options:
                         when installed: pause, seek, < > to skip chunks; chunks
                         are cached in ~/.cache/kokoro-tts with a .m3u playlist)
     --no-mpv            With --stream, play through sounddevice instead of mpv
+    --backend <str>     onnx (CPU, default) or llama (GPU via llama.cpp's
+                        llama-server; set KOKORO_LLAMA_SERVER to its path).
+                        Default can be set with KOKORO_BACKEND.
     --speed <float>     Set speech speed (default: 1.0)
     --lang <str>        Set language (default: en-us)
     --voice <str>       Set voice or blend voices (default: interactive selection)
@@ -200,11 +203,30 @@ Examples:
     kokoro-tts input.txt --model ./models/kokoro-v1.0.onnx --voices ./models/voices-v1.0.bin
     """)
 
+def selected_backend():
+    """--backend onnx|llama, else $KOKORO_BACKEND, else onnx (CPU)."""
+    backend = os.environ.get("KOKORO_BACKEND", "onnx")
+    for i, arg in enumerate(sys.argv):
+        if arg == '--backend' and i + 1 < len(sys.argv):
+            backend = sys.argv[i + 1]
+    backend = backend.lower()
+    if backend not in ("onnx", "llama"):
+        print(f"Error: --backend must be 'onnx' or 'llama', got {backend!r}")
+        sys.exit(1)
+    return backend
+
+def load_engine(model_path, voices_path):
+    """Kokoro on onnxruntime (CPU), or on llama.cpp's llama-server (GPU)."""
+    if selected_backend() == "llama":
+        from .llama_backend import LlamaKokoro
+        return LlamaKokoro()
+    check_required_files(model_path, voices_path)
+    return Kokoro(model_path, voices_path)
+
 def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     """Print all supported languages from Kokoro."""
-    check_required_files(model_path, voices_path)
     try:
-        kokoro = Kokoro(model_path, voices_path)
+        kokoro = load_engine(model_path, voices_path)
         languages = sorted(get_supported_languages(kokoro))
         print("\nSupported languages:")
         for lang in languages:
@@ -216,9 +238,8 @@ def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices
 
 def print_supported_voices(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     """Print all supported voices from Kokoro."""
-    check_required_files(model_path, voices_path)
     try:
-        kokoro = Kokoro(model_path, voices_path)
+        kokoro = load_engine(model_path, voices_path)
         voices = sorted(kokoro.get_voices())
         print("\nSupported voices:")
         for idx, voice in enumerate(voices):
@@ -830,12 +851,9 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
     if stdin_indicators is None:
         stdin_indicators = ['/dev/stdin', '-', 'CONIN$']  # CONIN$ is Windows stdin
     
-    # Check for required files first
-    check_required_files(model_path, voices_path)
-    
-    # Load Kokoro model
+    # Load Kokoro model (checks for the model files on the onnx backend)
     try:
-        kokoro = Kokoro(model_path, voices_path)
+        kokoro = load_engine(model_path, voices_path)
 
         # Validate language after loading model
         lang = validate_language(lang, kokoro)
@@ -1256,6 +1274,7 @@ def get_valid_options():
         '--merge-chunks',
         '--stream',
         '--no-mpv',
+        '--backend',
         '--speed',
         '--lang',
         '--voice',

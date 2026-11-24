@@ -134,10 +134,18 @@ def chunk_text(text, initial_chunk_size=1000):
     
     return chunks
 
+# kokoro-onnx >= 0.4 removed Kokoro.get_languages(); keep the espeak-ng
+# language list it used to return so validation and --help-languages work.
+SUPPORTED_LANGUAGES = ["en-us", "en-gb", "fr-fr", "it", "ja", "cmn"]
+
+def get_supported_languages(kokoro):
+    getter = getattr(kokoro, "get_languages", None)
+    return list(getter()) if getter else list(SUPPORTED_LANGUAGES)
+
 def validate_language(lang, kokoro):
     """Validate if the language is supported."""
     try:
-        supported_languages = set(kokoro.get_languages())  # Get supported languages from Kokoro
+        supported_languages = set(get_supported_languages(kokoro))  # Get supported languages from Kokoro
         if lang not in supported_languages:
             supported_langs = ', '.join(sorted(supported_languages))
             raise ValueError(f"Unsupported language: {lang}\nSupported languages are: {supported_langs}")
@@ -194,7 +202,7 @@ def print_supported_languages(model_path="kokoro-v1.0.onnx", voices_path="voices
     check_required_files(model_path, voices_path)
     try:
         kokoro = Kokoro(model_path, voices_path)
-        languages = sorted(kokoro.get_languages())
+        languages = sorted(get_supported_languages(kokoro))
         print("\nSupported languages:")
         for lang in languages:
             print(f"    {lang}")

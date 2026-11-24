@@ -2,7 +2,7 @@ beautifulsoup4
 ebooklib
 PyMuPDF
 pymupdf-layout
-kokoro-onnx==0.3.9
+kokoro-onnx==0.6.1
 pymupdf4llm
 sounddevice
 soundfile
